@@ -1,0 +1,110 @@
+# Author: Arif KIZILTEPE
+#         kzltpsgm@gmail.com
+#
+# Created Date : 2021-04-06
+#
+# Description : Debian/Ubuntu Security Update Management Playbook
+# Debian Uptade Management
+# Methods of Playbook
+#
+#####  List Method (Default)
+# Playbook shows only Upgrade list.
+# Example
+# ansible-playbook Debian_Update_Manager.yml
+# ansible-playbook Debian_Update_Manager.yml --extra-vars "choise=list"
+# 
+##### Upgrade Method (Default Only List)
+# Playbook upgrade all packages in inculude hosts.
+# Example
+# ansible-playbook Debian_Update_Manager.yml --extra-vars "choise=upgrade"
+#
+##### Reboot Method (Default No)
+# Sometime required reboot after upgrade. You can use this method. 
+# Example
+# ansible-playbook Debian_Update_Manager.yml --extra-vars "choise=upgrade reboots=Yes" 
+# ansible-playbook Debian_Update_Manager.yml --extra-vars "choise=upgrade reboots=No"
+#
+##### Hold Packages Method (Default or Empty is Blank)
+# You can hold packages while system upgrading
+# Example
+# ansible-playbook Debian_Update_Manager.yml --extra-vars "{"holds": [sudo,vim,unzip,xterm]}" --extra-vars "choise=upgrade reboots=Yes" 
+# ansible-playbook Debian_Update_Manager.yml --extra-vars "{"holds": [sudo,vim,unzip,xterm]}" --extra-vars "choise=upgrade reboots=No"
+
+##### Update Repo Method (Default No)
+# You can update default repo to own repo 
+# Example 
+# ansible-playbook Debian_Update_Manager.yml  --extra-vars "chrep=Yes"
+
+
+
+
+- hosts: debianclients
+  become: yes
+  vars: 
+    choise: list
+    reboots: No
+    holds: []
+    chrep: No
+  
+  tasks:
+  - name: Lock Package
+    shell: apt-mark hold "{{ item }}"
+    with_items: "{{ holds }}"
+    when: choise == "upgrade"    
+          
+  - name: Default repository is backuping
+    shell: mv /etc/apt/sources.list /etc/apt/sources.list.$(date +%d-%m-%Y-%H-%M)
+    register: represult
+    ignore_errors: yes
+    when: chrep == "Yes"
+          
+  - name: Repository is updating
+    become: true 
+    copy:
+      src: sources.list
+      dest: /etc/apt/
+      owner: root
+      group: root        
+      mode: 0644
+    ignore_errors: yes
+    when: chrep == "Yes"
+    
+  - name: Update lists are checking
+    shell: |
+        for i in $(dpkg --get-selections | xargs apt-cache policy {} | grep -1 Installed | sed -r 's/(:|Installed: |Candidate: )//' | uniq -u | tac | sed '/--/I,+1 d' | tac | sed '$d' | sed -n 1~2p); do
+            dpkg --get-selections | grep -o $i| xargs apt-cache policy {} | grep -1 Installed | head -n 4
+        done
+    register: uplist
+    ignore_errors: yes 
+ 
+  - name: Update list is printing
+    debug:
+        msg: '{{ uplist.stdout_lines|list }}'
+
+    
+  - name: Update apt repo and cache on
+    apt: update_cache=yes force_apt_get=yes cache_valid_time=3600
+    when: choise == "upgrade"
+
+  - name: Upgrade all packages on servers
+    apt: upgrade=dist force_apt_get=yes
+    when: choise == "upgrade"
+
+  - name: Check if a reboot is needed
+    register: reboot_required_file
+    stat: path=/var/run/reboot-required get_md5=no
+    when: choise == "upgrade"
+
+  - name: Reboot the box if kernel updated
+    reboot:
+      msg: "Reboot initiated by Ansible for kernel updates"
+      connect_timeout: 5
+      reboot_timeout: 300
+      pre_reboot_delay: 0
+      post_reboot_delay: 30
+      test_command: uptime
+    when: (choise == 'upgrade' and reboot_required_file.stat.exists) and reboots == "Yes"
+      
+
+
+        
